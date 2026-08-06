@@ -118,9 +118,8 @@
       padding: 13px 10px;
       border: 1px solid rgba(86, 66, 92, 0.09);
       border-radius: 18px;
-      background: var(--panel);
+      background: rgba(255,255,255,0.92);
       box-shadow: 0 8px 24px rgba(75, 48, 72, 0.08);
-      backdrop-filter: blur(12px);
       text-align: center;
     }
 
@@ -145,7 +144,7 @@
       padding: 15px 17px;
       border: 1px solid rgba(86, 66, 92, 0.09);
       border-radius: 20px;
-      background: var(--panel);
+      background: rgba(255,255,255,0.92);
       box-shadow: 0 8px 24px rgba(75, 48, 72, 0.08);
     }
 
@@ -264,9 +263,8 @@
       padding: clamp(9px, 1.5vw, 15px);
       border: 1px solid rgba(255,255,255,0.8);
       border-radius: clamp(24px, 4vw, 34px);
-      background: rgba(255,255,255,0.56);
+      background: rgba(255,255,255,0.78);
       box-shadow: var(--shadow), inset 0 0 0 1px rgba(92, 61, 89, 0.06);
-      backdrop-filter: blur(15px);
     }
 
     .board {
@@ -284,6 +282,7 @@
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
+      contain: layout style paint;
     }
 
     .board:focus-visible {
@@ -304,11 +303,10 @@
       background-image: var(--tile-image);
       background-position: center;
       background-size: cover;
-      box-shadow:
-        inset 0 0 0 1px rgba(255,255,255,0.5),
-        0 2px 4px rgba(41, 29, 43, 0.12);
+      box-shadow: 0 2px 4px rgba(41, 29, 43, 0.12);
       transform: translateZ(0);
-      transition: transform 180ms ease, opacity 180ms ease, filter 180ms ease, box-shadow 180ms ease;
+      /* Only transition transform + opacity — both are GPU-composited and cheap on mobile. */
+      transition: transform 160ms ease, opacity 160ms ease;
       -webkit-tap-highlight-color: transparent;
     }
 
@@ -317,7 +315,7 @@
       position: absolute;
       inset: 0;
       pointer-events: none;
-      background: linear-gradient(145deg, rgba(255,255,255,0.28), transparent 42%, rgba(0,0,0,0.09));
+      background: linear-gradient(160deg, rgba(255,255,255,0.18), transparent 50%);
     }
 
     .tile::after {
@@ -332,7 +330,6 @@
       border-radius: 50%;
       color: white;
       background: var(--tile-color);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.23);
       font-size: clamp(8px, 1.3vw, 12px);
       font-weight: 900;
     }
@@ -361,22 +358,22 @@
       background-position: center 35%;
     }
 
-    .tile:hover { filter: brightness(1.07); transform: scale(1.025); }
+    .tile:hover { transform: scale(1.03); }
     .tile:active { cursor: grabbing; }
 
     .tile.selected {
       z-index: 3;
-      transform: scale(1.09);
-      filter: brightness(1.08);
-      box-shadow: 0 0 0 4px white, 0 0 0 8px var(--tile-color), 0 8px 15px rgba(41,29,43,0.24);
-      animation: selectedPulse 800ms ease-in-out infinite alternate;
+      transform: scale(1.08);
+      /* outline composites on its own layer — far cheaper than multi-layer box-shadow. */
+      outline: 3px solid #fff;
+      outline-offset: -6px;
     }
 
     .tile.drag-target {
       z-index: 2;
-      transform: scale(0.9);
-      filter: brightness(1.14);
-      box-shadow: 0 0 0 4px rgba(255,255,255,0.9), 0 0 18px var(--tile-color);
+      transform: scale(0.92);
+      outline: 3px solid rgba(255,255,255,0.9);
+      outline-offset: -6px;
     }
 
     .tile.keyboard-focus {
@@ -384,10 +381,10 @@
       outline-offset: -7px;
     }
 
-    .tile.removing { animation: popOut 280ms ease forwards; }
-    .tile.new-tile { animation: dropIn 320ms cubic-bezier(.22,.9,.38,1.15); }
-    .board.invalid { animation: boardShake 260ms ease; }
-    .board.celebrate { animation: boardCelebrate 650ms ease; }
+    .tile.removing { animation: popOut 240ms ease forwards; }
+    .tile.new-tile { animation: dropIn 280ms cubic-bezier(.22,.9,.38,1.15); }
+    .board.invalid { animation: boardShake 220ms ease; }
+    .board.celebrate { animation: boardCelebrate 550ms ease; }
 
     .combo {
       position: absolute;
@@ -502,12 +499,8 @@
       border: 0;
     }
 
-    @keyframes selectedPulse {
-      to { filter: brightness(1.13) saturate(1.12); }
-    }
-
     @keyframes popOut {
-      35% { transform: scale(1.15) rotate(4deg); filter: brightness(1.2); }
+      35% { transform: scale(1.15) rotate(4deg); opacity: 0.9; }
       100% { transform: scale(0.08) rotate(-15deg); opacity: 0; }
     }
 
@@ -666,7 +659,7 @@
     const ROWS = 8;
     const COLS = 8;
     const TILE_TYPES = 3;
-    const ANIMATION = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 10 : 280;
+    const ANIMATION = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 10 : 180;
     const LEVELS = [
       { target: 600, moves: 20 },
       { target: 950, moves: 19 },
@@ -842,38 +835,59 @@
     }
 
     function render(options = {}) {
-      const fragment = document.createDocumentFragment();
       const removing = options.removing || new Set();
+      const currentSelected = state.selected;
+      const kbRow = state.keyboard.row;
+      const kbCol = state.keyboard.col;
 
+      // Reuse existing tile nodes when the board is already populated; only
+      // rebuild from scratch on first render or after a full reshuffle.
+      let rebuild = boardElement.childElementCount !== ROWS * COLS;
+
+      if (rebuild) {
+        const fragment = document.createDocumentFragment();
+        for (let row = 0; row < ROWS; row += 1) {
+          for (let col = 0; col < COLS; col += 1) {
+            const tile = document.createElement("button");
+            tile.type = "button";
+            tile.id = `tile-${row}-${col}`;
+            tile.dataset.row = String(row);
+            tile.dataset.col = String(col);
+            tile.setAttribute("role", "gridcell");
+            tile.setAttribute("aria-rowindex", String(row + 1));
+            tile.setAttribute("aria-colindex", String(col + 1));
+            tile.tabIndex = -1;
+            fragment.appendChild(tile);
+          }
+        }
+        boardElement.replaceChildren(fragment);
+      }
+
+      const cells = boardElement.children;
       for (let row = 0; row < ROWS; row += 1) {
         for (let col = 0; col < COLS; col += 1) {
+          const tile = cells[row * COLS + col];
           const type = state.board[row][col];
-          const tile = document.createElement("button");
           const key = keyOf(row, col);
-          tile.type = "button";
-          tile.id = `tile-${row}-${col}`;
-          tile.className = `tile type-${type}`;
-          tile.dataset.row = String(row);
-          tile.dataset.col = String(col);
-          tile.setAttribute("role", "gridcell");
-          tile.setAttribute("aria-rowindex", String(row + 1));
-          tile.setAttribute("aria-colindex", String(col + 1));
-          tile.setAttribute("aria-label", `第${row + 1}行第${col + 1}列，${tileLabel(type)}`);
-          tile.tabIndex = -1;
+          const desiredClass = `tile type-${type}`;
 
-          if (state.selected && state.selected.row === row && state.selected.col === col) {
-            tile.classList.add("selected");
-            tile.setAttribute("aria-pressed", "true");
+          if (tile.className !== desiredClass) {
+            tile.className = desiredClass;
+            tile.setAttribute("aria-label", `第${row + 1}行第${col + 1}列，${tileLabel(type)}`);
           }
-          if (state.keyboard.row === row && state.keyboard.col === col) tile.classList.add("keyboard-focus");
-          if (removing.has(key)) tile.classList.add("removing");
-          if (state.newTiles.has(key)) tile.classList.add("new-tile");
-          fragment.appendChild(tile);
+
+          let cls = desiredClass;
+          const isSel = currentSelected && currentSelected.row === row && currentSelected.col === col;
+          if (isSel) { cls += " selected"; tile.setAttribute("aria-pressed", "true"); }
+          else if (tile.hasAttribute("aria-pressed")) { tile.removeAttribute("aria-pressed"); }
+          if (row === kbRow && col === kbCol) cls += " keyboard-focus";
+          if (removing.has(key)) cls += " removing";
+          if (state.newTiles.has(key)) cls += " new-tile";
+          if (tile.className !== cls) tile.className = cls;
         }
       }
 
-      boardElement.replaceChildren(fragment);
-      boardElement.setAttribute("aria-activedescendant", `tile-${state.keyboard.row}-${state.keyboard.col}`);
+      boardElement.setAttribute("aria-activedescendant", `tile-${kbRow}-${kbCol}`);
       state.newTiles.clear();
       updateHud();
     }
